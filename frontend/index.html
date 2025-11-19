@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telegram Parser Ultra</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
+</head>
+<body class="bg-gradient-to-br from-gray-900 via-purple-900 to-black text-white min-h-screen p-8">
+  <div class="max-w-5xl mx-auto">
+    <h1 class="text-6xl font-bold text-center mb-12 bg-clip-text text-transparent bg-gradient-to-r from-pink-500 to-violet-500">
+      Telegram Parser Ultra
+    </h1>
+
+    <div class="bg-gray-800/90 backdrop-blur rounded-3xl p-10 shadow-2xl">
+      <input id="target" placeholder="Введите ссылку или @username чата/канала" class="w-full p-5 text-xl rounded-xl bg-gray-700 mb-8 focus:ring-4 focus:ring-purple-500 outline-none">
+
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <input id="limit" type="number" placeholder="Лимит участников (0 = без лимита)" class="p-4 rounded-xl bg-gray-700">
+        <input id="letter" maxlength="1" placeholder="Первая буква имени" class="p-4 rounded-xl bg-gray-700 text-center">
+        <input id="days" type="number" placeholder="Был онлайн за сколько дней (0 = все)" class="p-4 rounded-xl bg-gray-700">
+        <label class="flex items-center justify-center gap-3 text-lg">
+          <input id="online" type="checkbox" class="w-8 h-8">
+          <span>Только онлайн</span>
+        </label>
+      </div>
+
+      <!-- ТУМБЛЕР ПРОКСИ -->
+      <div class="mb-8 flex items-center gap-4">
+        <label class="flex items-center cursor-pointer">
+          <input id="useProxy" type="checkbox" class="sr-only peer">
+          <div class="relative w-14 h-8 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-purple-600"></div>
+          <span class="ml-4 text-xl">Использовать прокси (SOCKS5)</span>
+        </label>
+      </div>
+
+      <!-- Поле прокси — появляется при включении тумблера -->
+      <div id="proxyField" class="mb-8 hidden">
+        <input id="proxyInput" placeholder="socks5://ip:port:login:password  или  ip:port" class="w-full p-5 text-xl rounded-xl bg-gray-700 focus:ring-4 focus:ring-purple-500 outline-none">
+        <p class="text-sm text-gray-400 mt-2">Пример: socks5://123.45.67.89:1080:user:pass</p>
+      </div>
+
+      <div class="flex gap-6 justify-center mb-10">
+        <button id="startBtn" onclick="start()" class="px-12 py-6 text-3xl font-bold bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 rounded-2xl shadow-2xl transition transform hover:scale-105">
+          ЗАПУСТИТЬ ПАРСИНГ
+        </button>
+        <button id="stopBtn" onclick="stop()" class="hidden px-12 py-6 text-3xl font-bold bg-red-600 hover:bg-red-700 rounded-2xl shadow-2xl transition transform hover:scale-105">
+          ОСТАНОВИТЬ
+        </button>
+      </div>
+
+      <div class="text-center mb-10">
+        <div class="text-6xl font-bold" id="count">0</div>
+        <div class="text-2xl">участников найдено</div>
+      </div>
+
+      <pre id="log" class="bg-black/80 p-6 rounded-xl h-96 overflow-y-auto font-mono text-sm">Готов к работе...</pre>
+
+      <div id="btns" class="mt-10 flex justify-center gap-8 flex-wrap" style="display:none">
+        <a id="csv" class="px-10 py-5 bg-blue-600 hover:bg-blue-700 rounded-xl text-xl font-bold"><i class="fas fa-file-csv"></i> CSV</a>
+        <a id="xlsx" class="px-10 py-5 bg-green-600 hover:bg-green-700 rounded-xl text-xl font-bold"><i class="fas fa-file-excel"></i> Excel</a>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="fixed top-6 right-6 z-50 space-y-4"></div>
+
+  <script>
+    const useProxyToggle = document.getElementById("useProxy");
+    const proxyField = document.getElementById("proxyField");
+
+    useProxyToggle.addEventListener("change", () => {
+      proxyField.classList.toggle("hidden", !useProxyToggle.checked);
+    });
+
+    let taskId = null;
+    let ws = null;
+    let stopped = false;
+
+    function l(text, type = "info") {
+      const d = document.createElement("div");
+      d.innerHTML = `<span class="text-gray-500">[${new Date().toLocaleTimeString()}]</span> <span class="${type==='error'?'text-red-400':type==='success'?'text-green-400':'text-cyan-300'}">${text}</span>`;
+      const log = document.getElementById("log");
+      log.appendChild(d);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function toast(msg, type = "info") {
+      const t = document.createElement("div");
+      t.className = `p-6 rounded-xl shadow-2xl text-white font-bold text-xl animate__animated animate__fadeInRight ${type==='success'?'bg-green-600':type==='error'?'bg-red-600':'bg-blue-600'}`;
+      t.textContent = msg;
+      document.getElementById("toast").appendChild(t);
+      setTimeout(() => t.classList.add("animate__fadeOutRight"), 4000);
+      setTimeout(() => t.remove(), 5000);
+    }
+
+    async function start() {
+      const target = document.getElementById("target").value.trim();
+      if (!target) return l("Укажи ссылку!", "error");
+
+      stopped = false;
+      document.getElementById("startBtn").classList.add("hidden");
+      document.getElementById("stopBtn").classList.remove("hidden");
+      document.getElementById("btns").style.display = "none";
+
+      const payload = {
+        target,
+        limit: parseInt(document.getElementById("limit").value) || 0,
+        letter: document.getElementById("letter").value.trim().slice(0,1).toLowerCase(),
+        recent_days: parseInt(document.getElementById("days").value) || 0,
+        online_only: document.getElementById("online").checked,
+        use_proxy: useProxyToggle.checked,
+        proxy: useProxyToggle.checked ? document.getElementById("proxyInput").value.trim() : null
+      };
+
+      const r = await fetch("/api/parse", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+      const d = await r.json();
+      if (d.error) {
+        l(d.error, "error");
+        toast("Ошибка запуска", "error");
+        document.getElementById("startBtn").classList.remove("hidden");
+        document.getElementById("stopBtn").classList.add("hidden");
+        return;
+      }
+
+      taskId = d.task_id;
+      l(`Задача ${taskId}`, "success");
+      toast("Парсинг запущен", "success");
+      connectWS();
+    }
+
+    async function stop() {
+      stopped = true;
+      if (taskId) await fetch(`/api/stop/${taskId}`, {method: "POST"});
+      l("Остановлено", "error");
+      toast("Парсинг остановлен", "error");
+      if (ws) ws.close();
+      document.getElementById("startBtn").classList.remove("hidden");
+      document.getElementById("stopBtn").classList.add("hidden");
+    }
+
+    function connectWS() {
+      if (!taskId) return;
+      ws = new WebSocket(`ws://${location.host}/ws/${taskId}`);
+      ws.onmessage = e => {
+        if (stopped) return;
+        const m = JSON.parse(e.data);
+        if (m.type === "log") l(m.message);
+        if (m.type === "progress") document.getElementById("count").textContent = m.parsed;
+        if (m.type === "finished" || m.type === "stopped") {
+          l(m.message, "success");
+          toast(m.message, "success");
+          document.getElementById("csv").href = `/api/download/${taskId}?format=csv`;
+          document.getElementById("xlsx").href = `/api/download/${taskId}?format=xlsx`;
+          document.getElementById("btns").style.display = "flex";
+          document.getElementById("startBtn").classList.remove("hidden");
+          document.getElementById("stopBtn").classList.add("hidden");
+        }
+        if (m.type === "error") {
+          l(m.message, "error");
+          toast("Ошибка!", "error");
+          document.getElementById("startBtn").classList.remove("hidden");
+          document.getElementById("stopBtn").classList.add("hidden");
+        }
+      };
+    }
+  </script>
+</body>
+</html>
