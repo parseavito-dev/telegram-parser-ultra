@@ -5,7 +5,7 @@ import asyncio
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from backend.parser import parser
+from parser import parser
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
@@ -22,7 +22,7 @@ async def start_parse(request: Request):
     data = await request.json()
     target = data.get("target", "").strip()
     if not target:
-        return JSONResponse({"error": "Укажи ссылку"}, status_code=400)
+        return JSONResponse({"error": "Укажи чат"}, status_code=400)
 
     task_id = await parser.start_parsing(
         session_name="my_account",
@@ -31,8 +31,8 @@ async def start_parse(request: Request):
         online_only=data.get("online_only", False),
         recent_days=int(data.get("recent_days", 0)),
         letter=data.get("letter", "")[:1].lower(),
-        use_proxy=data.get("use_proxy", False),
-        proxy=data.get("proxy")
+        use_proxy=data.get("use_proxy", False),   # ←←← ДОБАВИЛ
+        proxy=data.get("proxy") if data.get("use_proxy", False) else None  # ←←← ДОБАВИЛ
     )
     return {"task_id": task_id}
 
