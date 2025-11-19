@@ -1,3 +1,4 @@
+# backend/parser.py — НЕ ЗАВИСАЕТ + быстро работает (финал 19.11.2025)
 import os
 import asyncio
 import pandas as pd
@@ -51,7 +52,7 @@ class Parser:
         client = TelegramClient(**client_args)
         await client.connect()
         if not await client.is_user_authorized():
-            print("Сессия не авторизована!")
+            print("Сессия умерла!")
             exit(1)
         return client
 
@@ -62,7 +63,7 @@ class Parser:
         self.tasks[task_id] = {"users": set()}
         self.cancel_flags[task_id] = False
 
-        asyncio.create_task(self._worker(task_id, target, limit, online_only, recent_days, letter, queue, use_proxy, proxy))
+        asyncio.create_task(self._worker(task_id, target, limit, online_only, recent_days, letter.lower() if letter else "", queue, use_proxy, proxy))
         return task_id
 
     def stop_task(self, task_id):
@@ -80,33 +81,41 @@ class Parser:
             username = target.replace("https://t.me/", "").replace("@", "").split("?")[0].split("/")[0]
             entity = await client.get_entity(username)
             if getattr(entity, "left", False):
-                await queue.put({"type": "log", "message": "Вступаем..."})
+                await queue.put({"type": "log", "message": "Вступаем в чат..."})
                 await client(JoinChannelRequest(entity))
                 await asyncio.sleep(3)
             return True
         except Exception as e:
-            await queue.put({"type": "log", "message": f"Вступление: {str(e)}"})
-            return "USER_ALREADY_PARTICIPANT" not in str(e)
+            if "USER_ALREADY_PARTICIPANT" not in str(e):
+                await queue.put({"type": "log", "message": f"Вступление: {str(e)}"})
+            return True
 
     async def _worker(self, task_id, target, limit, online_only, recent_days, letter, queue, use_proxy, proxy):
         client = await self._get_client(proxy if use_proxy else None)
         total = 0
         seen = set()
+        last_progress = 0
 
         try:
             await self._auto_join(client, target, queue)
             entity = await client.get_entity(target)
             title = getattr(entity, "title", target)
-            await queue.put({"type": "log", "message": f"В чате: {title} — скроллим историю"})
+            await queue.put({"type": "log", "message": f"Чат: {title} — парсим до 100 000 последних сообщений"})
 
-            async for message in client.iter_messages(entity, limit=None):
+            # УМНЫЙ ЛИМИТ — максимум 100к сообщений (хватит на любой чат)
+            max_messages = 100000
+            if limit > 0:
+                max_messages = min(max_messages, limit * 20)  # запас
+
+            async for message in client.iter_messages(entity, limit=max_messages):
                 if self.cancel_flags.get(task_id, False):
                     await queue.put({"type": "log", "message": "Остановлено пользователем"})
                     break
-                if limit and total >= limit:
-                    break
-                if total % 100 == 0 and total > 0:
+
+                current_time = datetime.now().timestamp()
+                if current_time - last_progress > 10:  # прогресс каждые 10 сек
                     await queue.put({"type": "progress", "parsed": total})
+                    last_progress = current_time
 
                 if not message.sender_id:
                     continue
@@ -148,9 +157,7 @@ class Parser:
                     ))
                     total += 1
 
-            status = "stopped" if self.cancel_flags.get(task_id, False) else "finished"
-            msg = f"Остановлено. Найдено {total}" if status == "stopped" else f"ГОТОВО! Найдено {total} человек"
-            await queue.put({"type": status, "message": msg, "count": total})
+            await queue.put({"type": "finished", "message": f"ГОТОВО! Найдено {total} человек", "count": total})
 
             df = pd.DataFrame([{
                 "id": uid,
