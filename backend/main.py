@@ -5,7 +5,7 @@ import asyncio
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from parser import parser
+from backend.parser import parser   # ←←← ЭТО ИСПРАВЛЕНИЕ
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
